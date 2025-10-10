@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Height Map 2 Visualization with Trajectory</title>
+    <!-- Using a recent version of Plotly.js -->
+    <script src="https://cdn.plot.ly/plotly-2.29.1.min.js"></script>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+            background-color: #f0f2f5;
+        }
+        h1 {
+            color: #333;
+        }
+        #plotDiv {
+            width: 80vw;
+            height: 80vh;
+            border-radius: 10px;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        }
+    </style>
+</head>
+<body>
+    <h1>Height Map 2 with Optimized Trajectory</h1>
+    <div id="plotDiv"></div>
+
+    <script>
+        // JavaScript version of the HeightMap2 function
+        function heightMap2(x, y) {
+            const hilldata = [
+                [-60,42.5,10],[-60,0,10],[-60,-42.5,10],[-37.5,32.5,3],[-45,20,3],[-37.5,0,3],[-45,-20,3],[-37.5,-32.5,3],
+                [-20,47.5,8.5],[-20,16,8.5],[-20,-16,8.5],[-20,-47.5,8.5],[0,55,4.5],[0,30,4.5],[0,0,4.5],[0,-30,4.5],[0,-55,4.5],
+                [20,47.5,8.5],[20,16,8.5],[20,-16,8.5],[20,-47.5,8.5],[37.5,32.5,3],[45,20,3],[37.5,0,3],[45,-20,3],[37.5,-32.5,3],
+                [60,42.5,10],[60,0,10],[60,-42.5,10]
+            ];
+            if (Math.abs(x) >= 99.99 || Math.abs(y) >= 49.99) return 0;
+            let height = 0;
+            for (const [cx, cy, sigma] of hilldata) {
+                height += Math.exp(-((x - cx) ** 2 + (y - cy) ** 2) / (2 * sigma ** 2));
+            }
+            return height;
+        }
+
+        // --- Corrected Trajectory Data for Hmap2 ---
+        const trajectoryData = [[-85,0],[-83.7090915,3.87921604],[-81.7123293,7.44674569],[-79.6348089,10.9670647],[-76.5924173,13.6981113],[-73.1405485,15.888637],[-69.4314457,17.6071892],[-65.4105962,18.3163396],[-61.3291149,18.5530082],[-57.2567586,18.1984327],[-53.4525677,16.7104704],[-49.9355498,14.6283775],[-46.3554082,12.6543236],[-42.6009552,11.0375245],[-38.8781036,9.34791489],[-35.1746791,7.61605104],[-31.8596583,5.22483828],[-28.4289391,3.00234913],[-24.7709327,1.17684912],[-20.8434314,0.0412899528],[-16.8418374,-0.795740583],[-13.0323135,-2.27576739],[-9.68227485,-4.6187573],[-6.54705413,-7.24260123],[-2.78101173,-8.82224452],[1.28903997,-9.18540103],[5.17289906,-7.93589455],[8.59562274,-5.69993793],[12.0818525,-3.56429667],[15.9073585,-2.12261112],[19.9780725,-1.79636787],[24.0493155,-2.17018861],[28.0462699,-3.0274417],[31.530334,-5.16028827],[34.9361695,-7.42178952],[38.5625324,-9.30971257],[42.2043393,-11.1676644],[46.0374363,-12.5889651],[49.6972152,-14.4107624],[53.1332998,-16.6261821],[56.9784921,-18.0136828],[61.0492187,-18.3684914],[65.1132352,-17.9278538],[69.1397253,-17.2198814],[72.9777754,-15.8131575],[76.4153279,-13.6006798],[79.3624904,-10.7671317],[81.8328748,-7.50972542],[83.7127049,-3.88041659],[85,0]];
+
+        // --- Helper functions for upsampling ---
+        function interp(x, xp, fp) {
+            const n = xp.length;
+            if (x < xp[0]) return fp[0];
+            if (x > xp[n - 1]) return fp[n - 1];
+            let i = 1;
+            while (x > xp[i]) i++;
+            const p = (x - xp[i - 1]) / (xp[i] - xp[i - 1]);
+            return fp[i - 1] + p * (fp[i] - fp[i - 1]);
+        }
+
+        function upsampleAndProcessTrajectory(traj, numPoints) {
+            const dists = [0];
+            let totalDist = 0;
+            for (let i = 1; i < traj.length; i++) {
+                const dx = traj[i][0] - traj[i - 1][0];
+                const dy = traj[i][1] - traj[i - 1][1];
+                totalDist += Math.sqrt(dx * dx + dy * dy);
+                dists.push(totalDist);
+            }
+
+            const newDists = [];
+            for (let i = 0; i < numPoints; i++) {
+                newDists.push(i * totalDist / (numPoints - 1));
+            }
+
+            const origX = traj.map(p => p[0]);
+            const origY = traj.map(p => p[1]);
+
+            const upsampledX = newDists.map(d => interp(d, dists, origX));
+            const upsampledY = newDists.map(d => interp(d, dists, origY));
+            const upsampledZ = upsampledX.map((x, i) => heightMap2(x, upsampledY[i]) + 0.02);
+
+            return { upsampledX, upsampledY, upsampledZ };
+        }
+        
+        // --- Generate data for the plot ---
+        const resolution = 300;
+        const x_min = -100, x_max = 100, y_min = -50, y_max = 50;
+        const x_vals = Array.from({length: resolution}, (_, i) => x_min + (x_max - x_min) * i / (resolution - 1));
+        const y_vals = Array.from({length: resolution}, (_, i) => y_min + (y_max - y_min) * i / (resolution - 1));
+        const z_vals = y_vals.map(y => x_vals.map(x => heightMap2(x, y)));
+
+        const plasmaColorscale = [[0.0,'#05045a'],[0.1,'#46039f'],[0.2,'#7201a8'],[0.3,'#9c179e'],[0.4,'#bd3786'],[0.5,'#d8576b'],[0.6,'#ed7953'],[0.7,'#fb9f3a'],[0.8,'#fdca26'],[0.9,'#f0f921'],[1.0,'#f0f921']];
+        
+        // --- Process trajectory for plotting ---
+        const { upsampledX, upsampledY, upsampledZ } = upsampleAndProcessTrajectory(trajectoryData, 500);
+        const originalX = trajectoryData.map(p => p[0]);
+        const originalY = trajectoryData.map(p => p[1]);
+        const originalZ = originalX.map((x, i) => heightMap2(x, originalY[i]) + 0.02);
+        
+        // --- Create the Plotly plot ---
+        const data = [
+            { // Surface
+                x: x_vals, y: y_vals, z: z_vals,
+                type: 'surface',
+                colorscale: plasmaColorscale,
+                showscale: false
+            },
+            { // Upsampled smooth line
+                x: upsampledX, y: upsampledY, z: upsampledZ,
+                mode: 'lines', type: 'scatter3d', name: 'Trajectory',
+                line: { width: 6, color: 'white' },
+                hoverinfo: 'none'
+            },
+            { // Small white markers for intermediate points
+                x: originalX.slice(1, -1), y: originalY.slice(1, -1), z: originalZ.slice(1, -1),
+                mode: 'markers', type: 'scatter3d', name: 'Waypoints',
+                marker: { size: 4, color: 'white' },
+                hoverinfo: 'none'
+            },
+            { // Large green start marker
+                x: [originalX[0]], y: [originalY[0]], z: [originalZ[0]],
+                mode: 'markers', type: 'scatter3d', name: 'Start',
+                marker: { size: 8, color: 'lime' },
+                hoverinfo: 'none'
+            },
+            { // Large red end marker
+                x: [originalX[originalX.length - 1]], y: [originalY[originalY.length - 1]], z: [originalZ[originalZ.length - 1]],
+                mode: 'markers', type: 'scatter3d', name: 'End',
+                marker: { size: 8, color: 'red' },
+                hoverinfo: 'none'
+            }
+        ];
+
+        const layout = {
+            title: '3D Surface Plot of HeightMap2 with Trajectory',
+            autosize: true,
+            scene: {
+                xaxis: { title: 'X Coordinate', range: [-100, 100] },
+                yaxis: { title: 'Y Coordinate', range: [-50, 50] },
+                zaxis: { title: 'Height' },
+                aspectratio: {x: 2, y: 1, z: 0.4}
+            },
+            margin: { l: 0, r: 0, b: 0, t: 40 },
+            legend: { x: 0.8, y: 0.95 }
+        };
+
+        Plotly.newPlot('plotDiv', data, layout);
+    </script>
+</body>
+</html>
+

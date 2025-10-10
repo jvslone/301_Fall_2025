@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Height Map 1 Visualization with Trajectory</title>
+    <!-- Using a recent version of Plotly.js -->
+    <script src="https://cdn.plot.ly/plotly-2.29.1.min.js"></script>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+            background-color: #f0f2f5;
+        }
+        h1 {
+            color: #333;
+        }
+        #plotDiv {
+            width: 80vw;
+            height: 80vh;
+            border-radius: 10px;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        }
+    </style>
+</head>
+<body>
+    <h1>Height Map 1 with Optimized Trajectory</h1>
+    <div id="plotDiv"></div>
+
+    <script>
+        // JavaScript version of the HeightMap1 function
+        function heightMap1(x, y) {
+            const hilldata = [
+                [-60, 0, 13],
+                [0, 42.5, 16],
+                [0, -42.5, 16],
+                [60, 0, 13]
+            ];
+            let height = 0;
+            for (const [center_x, center_y, sigma] of hilldata) {
+                height += Math.exp(-((x - center_x) ** 2 + (y - center_y) ** 2) / (2 * sigma ** 2));
+            }
+            return height;
+        }
+
+        // --- Corrected Trajectory Data for Hmap1 ---
+        const trajectoryData = [[-85,0],[-79.59797769,-8.67148495],[-71.87284095,-15.35700263],[-62.58251763,-19.60825745],[-52.3840652,-20.2319195],[-42.41439837,-17.99608752],[-33.08146815,-13.8376727],[-23.78478345,-9.5987214],[-14.376452,-5.61366358],[-4.9944291,-1.56737726],[4.72935691,1.57035632],[14.20120284,5.40161348],[23.64099474,9.31156429],[32.80646896,13.82719275],[42.2433023,17.74368569],[52.17241658,20.1432402],[62.36396952,19.43185727],[71.61727273,15.09898685],[79.51925417,8.62186289],[85,0]];
+
+        // --- Helper functions for upsampling ---
+        function interp(x, xp, fp) {
+            const n = xp.length;
+            if (x < xp[0]) return fp[0];
+            if (x > xp[n - 1]) return fp[n - 1];
+            let i = 1;
+            while (x > xp[i]) i++;
+            const p = (x - xp[i - 1]) / (xp[i] - xp[i - 1]);
+            return fp[i - 1] + p * (fp[i] - fp[i - 1]);
+        }
+
+        function upsampleAndProcessTrajectory(traj, numPoints) {
+            const dists = [0];
+            let totalDist = 0;
+            for (let i = 1; i < traj.length; i++) {
+                const dx = traj[i][0] - traj[i - 1][0];
+                const dy = traj[i][1] - traj[i - 1][1];
+                totalDist += Math.sqrt(dx * dx + dy * dy);
+                dists.push(totalDist);
+            }
+
+            const newDists = [];
+            for (let i = 0; i < numPoints; i++) {
+                newDists.push(i * totalDist / (numPoints - 1));
+            }
+
+            const origX = traj.map(p => p[0]);
+            const origY = traj.map(p => p[1]);
+
+            const upsampledX = newDists.map(d => interp(d, dists, origX));
+            const upsampledY = newDists.map(d => interp(d, dists, origY));
+            const upsampledZ = upsampledX.map((x, i) => heightMap1(x, upsampledY[i]) + 0.02);
+
+            return { upsampledX, upsampledY, upsampledZ };
+        }
+
+        // --- Generate data for the plot ---
+        const resolution = 300;
+        const x_min = -100, x_max = 100, y_min = -50, y_max = 50;
+        const x_vals = Array.from({length: resolution}, (_, i) => x_min + (x_max - x_min) * i / (resolution - 1));
+        const y_vals = Array.from({length: resolution}, (_, i) => y_min + (y_max - y_min) * i / (resolution - 1));
+        const z_vals = y_vals.map(y => x_vals.map(x => heightMap1(x, y)));
+
+        const plasmaColorscale = [[0.0,'#05045a'],[0.1,'#46039f'],[0.2,'#7201a8'],[0.3,'#9c179e'],[0.4,'#bd3786'],[0.5,'#d8576b'],[0.6,'#ed7953'],[0.7,'#fb9f3a'],[0.8,'#fdca26'],[0.9,'#f0f921'],[1.0,'#f0f921']];
+        
+        // --- Process trajectory for plotting ---
+        const { upsampledX, upsampledY, upsampledZ } = upsampleAndProcessTrajectory(trajectoryData, 500);
+        const originalX = trajectoryData.map(p => p[0]);
+        const originalY = trajectoryData.map(p => p[1]);
+        const originalZ = originalX.map((x, i) => heightMap1(x, originalY[i]) + 0.02);
+        
+        // --- Create the Plotly plot ---
+        const data = [
+            { // Surface
+                x: x_vals, y: y_vals, z: z_vals,
+                type: 'surface',
+                colorscale: plasmaColorscale,
+                showscale: false
+            },
+            { // Upsampled smooth line
+                x: upsampledX, y: upsampledY, z: upsampledZ,
+                mode: 'lines', type: 'scatter3d', name: 'Trajectory',
+                line: { width: 6, color: 'white' },
+                hoverinfo: 'none'
+            },
+            { // Small white markers for intermediate points
+                x: originalX.slice(1, -1), y: originalY.slice(1, -1), z: originalZ.slice(1, -1),
+                mode: 'markers', type: 'scatter3d', name: 'Waypoints',
+                marker: { size: 4, color: 'white' },
+                hoverinfo: 'none'
+            },
+            { // Large green start marker
+                x: [originalX[0]], y: [originalY[0]], z: [originalZ[0]],
+                mode: 'markers', type: 'scatter3d', name: 'Start',
+                marker: { size: 8, color: 'lime' },
+                hoverinfo: 'none'
+            },
+            { // Large red end marker
+                x: [originalX[originalX.length - 1]], y: [originalY[originalY.length - 1]], z: [originalZ[originalZ.length - 1]],
+                mode: 'markers', type: 'scatter3d', name: 'End',
+                marker: { size: 8, color: 'red' },
+                hoverinfo: 'none'
+            }
+        ];
+
+        const layout = {
+            title: '3D Surface Plot of HeightMap1 with Trajectory',
+            autosize: true,
+            scene: {
+                xaxis: { title: 'X Coordinate', range: [-100, 100] },
+                yaxis: { title: 'Y Coordinate', range: [-50, 50] },
+                zaxis: { title: 'Height' },
+                aspectratio: {x: 2, y: 1, z: 0.4}
+            },
+            margin: { l: 0, r: 0, b: 0, t: 40 },
+            legend: { x: 0.8, y: 0.95 }
+        };
+
+        Plotly.newPlot('plotDiv', data, layout);
+    </script>
+</body>
+</html>
+
